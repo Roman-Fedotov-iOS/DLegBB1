@@ -27,7 +27,7 @@ let package = Package(
                 "ApphudSDK"
             ],
             resources: [
-                .process("Model.xcdatamodeld")
+                .process("BassBooster.xcdatamodeld")
             ]
         ),
         .testTarget(
