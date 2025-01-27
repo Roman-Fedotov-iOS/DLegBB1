@@ -297,6 +297,10 @@ public struct PaywallView: View {
     @State private var apphudProducts: [ApphudProduct] = []
     @State private var hasShownTabbar: Bool = UserDefaults.standard.bool(forKey: "HasShownTabbar")
     
+    public init(showTabBar: Bool) {
+        self._showTabBar = State(initialValue: showTabBar)
+    }
+    
     public var body: some View {
         ZStack {
             Image("premiumImage")
@@ -454,6 +458,8 @@ public struct PaywallView: View {
 public struct SettingsView: View {
     @EnvironmentObject private var purchaseManager: PurchaseManager
     @Environment(\.dismiss) private var dismiss
+    
+    public init() {}
     
     public var body: some View {
         ZStack {
