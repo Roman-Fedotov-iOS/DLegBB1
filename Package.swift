@@ -6,7 +6,8 @@ import PackageDescription
 let package = Package(
     name: "DLegBB1",
     platforms: [
-        .iOS(.v15)  // Specify the minimum iOS version if needed
+        .iOS(.v15),
+        .macOS(.v10_15)
     ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
@@ -15,7 +16,7 @@ let package = Package(
             targets: ["DLegBB1"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apphud/ApphudSDK.git", exact: "3.0.1")
+        .package(url: "https://github.com/apphud/ApphudSDK.git", exact: "3.5.8")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.

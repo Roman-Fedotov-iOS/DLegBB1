@@ -430,13 +430,13 @@ public struct PaywallView: View {
                     UserDefaults.standard.set(true, forKey: "HasShownTabbar")
                 }
             }
-            .onAppear {
-                Apphud.paywallsDidLoadCallback { paywalls in
-                    if let paywall = paywalls.first(where: { $0.identifier == (UserDefaults.standard.bool(forKey: "HasShownTabbar") ? "inapp_paywall" : "onboarding_paywall") }) {
-                        apphudProducts = paywall.products
-                    }
-                }
-            }
+//            .onAppear {
+//                Apphud.paywallsDidLoadCallback { paywalls in
+//                    if let paywall = paywalls.first(where: { $0.identifier == (UserDefaults.standard.bool(forKey: "HasShownTabbar") ? "inapp_paywall" : "onboarding_paywall") }) {
+//                        apphudProducts = paywall.products
+//                    }
+//                }
+//            }
             .alert(isPresented: $showAlert) {
                 Alert(title: Text(alertTitle), message: Text(alertMessage), dismissButton: .default(Text("OK")))
             }
