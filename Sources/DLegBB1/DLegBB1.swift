@@ -12,7 +12,9 @@ public struct SplashView: View {
     
     public static var image: String?
 
-    public init() {}  // Explicitly public initializer
+    public init(image: String) {
+        SplashView.image = image
+    }
 
     @available(iOS 13.0.0, *)
     public var body: some View {
