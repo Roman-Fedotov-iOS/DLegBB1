@@ -12,6 +12,8 @@ public struct SplashView: View {
     
     public static var image: String?
 
+    public init() {}  // Explicitly public initializer
+
     @available(iOS 13.0.0, *)
     public var body: some View {
         ZStack {
@@ -27,10 +29,15 @@ public struct SplashView: View {
             }
             VStack {
                 Spacer()
-                Image(SplashView.image!)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 200, height: 200)
+                if let imageName = SplashView.image {
+                    Image(imageName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 200, height: 200)
+                } else {
+                    Text("No image available")
+                        .foregroundColor(.white)
+                }
                 Text("BASS BOOSTER")
                     .font(.system(size: 32, weight: .medium))
                     .foregroundColor(.white)
