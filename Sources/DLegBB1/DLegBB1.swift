@@ -1764,6 +1764,8 @@ public struct MainView: View {
     @EnvironmentObject var viewModel: SongViewModel
     @GestureState var dragOffset = CGSize.zero
     
+    public init() {}
+    
     public var body: some View {
             TabBarView()
             .minimizableView(content: { MainPlayerView()
