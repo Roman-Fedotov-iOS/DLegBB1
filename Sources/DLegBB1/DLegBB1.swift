@@ -1677,3 +1677,84 @@ public class MVKeyboardNotifier: ObservableObject {
         self.keyboardHeight = 0
     }
 }
+
+public struct EmptyListView: View {
+    public var title: String
+    public var image: String
+    
+    public init(title: String, image: String) {
+        self.title = title
+        self.image = image
+    }
+    
+    public var body: some View {
+        VStack {
+            Spacer()
+            
+            Image(image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 80, height: 80)
+                .foregroundColor(.white)
+                .padding()
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .lineLimit(nil)
+                .multilineTextAlignment(.center)
+            
+            Spacer()
+        }
+        .frame(height: 220)
+        .opacity(0.5)
+    }
+}
+
+public struct BlurView: UIViewRepresentable {
+    
+    public func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialDark))
+        return view
+    }
+    
+    public func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
+        
+    }
+}
+
+public struct SearchBar: View {
+    @Binding var text: String
+    
+    public init(text: Binding<String>) {
+        self._text = text
+    }
+    
+    public var body: some View {
+        HStack {
+            ZStack {
+                TextField("", text: $text)
+                    .placeholder(when: text.isEmpty, placeholder: {
+                        Text("Search Songs, Albums, Artists")
+                            .foregroundColor(Color(red: 0.48, green: 0.48, blue: 0.48))
+                            .font(.system(size: 16, weight: .light))
+                            .lineLimit(1)
+                    })
+                    .padding(12)
+                    .padding(.horizontal, 28)
+                    .background(Color(red: 0.13, green: 0.13, blue: 0.13))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+            }
+        }
+        .overlay(
+            HStack {
+                Image("searchTabIcon")
+                    .foregroundColor(.white)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 30)
+                    .opacity(0.2)
+            }
+        )
+    }
+}
