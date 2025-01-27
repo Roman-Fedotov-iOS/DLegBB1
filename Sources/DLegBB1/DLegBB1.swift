@@ -642,10 +642,10 @@ public struct CustomBackButton: View {
 }
 
 @MainActor
-class PurchaseManager: NSObject, ObservableObject {
+public class PurchaseManager: NSObject, ObservableObject {
     @Published var isPremium: Bool = false
     
-    override init() {
+    public override init() {
         super.init()
         checkSubscriptionStatus()
     }
@@ -752,5 +752,283 @@ public extension UIDevice {
     var hasNotch: Bool {
         let keyWindow = UIApplication.shared.windows.filter {$0.isKeyWindow}.first
         return keyWindow?.safeAreaInsets.bottom ?? 0 > 0
+    }
+}
+
+public class FileHandler {
+    public static let shared = FileHandler()
+    
+    func saveFile(data: Data, fileID: String) {
+        let fileURL = FileManager.documentsDirectory.appendingPathComponent(fileID)
+        
+        do {
+            try data.write(to: fileURL)
+        } catch {
+            print("Error saving file: \(error)")
+        }
+    }
+    
+    func loadFile(from fileID: String) -> Data? {
+        let url = FileManager.documentsDirectory.appendingPathComponent(fileID)
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            print("Error loading file: \(error)")
+            return nil
+        }
+    }
+    
+    func deleteFile(fileID: String) {
+        let fileURL = FileManager.documentsDirectory.appendingPathComponent(fileID)
+        
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+        } catch {
+            print("Error deleting file: \(error)")
+        }
+    }
+}
+
+public class VibrationManager {
+    public static let shared = VibrationManager()
+
+    public var engine: CHHapticEngine?
+
+    public init() {
+        setupHapticEngine()
+    }
+
+    private func setupHapticEngine() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else {
+            return
+        }
+
+        do {
+            engine = try CHHapticEngine()
+            try engine?.start()
+        } catch {
+            print("Error starting haptic engine: \(error.localizedDescription)")
+        }
+    }
+
+    func vibrate(style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.impactOccurred()
+    }
+
+    func vibrateCustom(pattern: [Double], style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
+        guard pattern.count > 0 else { return }
+
+        if CHHapticEngine.capabilitiesForHardware().supportsHaptics {
+            do {
+                var events: [CHHapticEvent] = []
+
+                for (index, duration) in pattern.enumerated() {
+                    let eventType: CHHapticEvent.EventType = (index % 2 == 0) ? .hapticContinuous : .hapticTransient
+
+                    let event = CHHapticEvent(eventType: eventType, parameters: [
+                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5),
+                        CHHapticEventParameter(parameterID: .hapticIntensity, value: 1.0)
+                    ], relativeTime: duration)
+
+                    events.append(event)
+                }
+
+                let customPattern = try CHHapticPattern(events: events, parameters: [])
+                let player = try engine?.makePlayer(with: customPattern)
+                try player?.start(atTime: 0)
+            } catch {
+                print("Error playing custom haptic feedback: \(error.localizedDescription)")
+            }
+        } else {
+            let generator = UIImpactFeedbackGenerator(style: style)
+            generator.impactOccurred()
+        }
+    }
+}
+
+public struct ConvertManager {
+    public static let shared = ConvertManager()
+
+    func getFileMetadata(from url: URL, isOnboarding: Bool = false) -> SongModel? {
+        let asset = AVURLAsset(url: url)
+        let metadata = asset.metadata
+        
+        var trackName = url.lastPathComponent
+        var artistName = "Unknown"
+        var albumArtwork = UIImage()
+        
+        for item in metadata {
+            guard let key = item.commonKey, let value = item.value else {
+                continue
+            }
+            
+            switch key {
+            case .commonKeyTitle:
+                trackName = value as? String ?? url.lastPathComponent
+            case .commonKeyArtist:
+                artistName = value as? String ?? "Unknown"
+            case .commonKeyArtwork:
+                if let data = value as? Data {
+                    albumArtwork = UIImage(data: data) ?? UIImage()
+                }
+            default:
+                break
+            }
+        }
+        
+        let bookmarkData = try? url.bookmarkData()
+        var newImageID: UUID?
+        if let imageData = albumArtwork.jpegData(compressionQuality: 1.0) {
+            let imageID = UUID()
+            let _ = FileHandler.shared.saveFile(data: imageData, fileID: imageID.uuidString)
+            newImageID = imageID
+        }
+        let track = SongModel(id: UUID(),
+                              imageID: newImageID,
+                              name: trackName,
+                              artist: artistName,
+                              totalDuration: asset.duration.seconds,
+                              isFavorite: false,
+                              bookmarkData: bookmarkData,
+                              isOnboarding: isOnboarding)
+        return track
+    }
+}
+
+public struct SongModel: Identifiable {
+    public let id: UUID
+    let imageID: UUID?
+    let name: String
+    let artist: String
+    let totalDuration: Double
+    let isFavorite: Bool
+    let bookmarkData: Data?
+    let isOnboarding: Bool
+}
+
+public struct EffectModel: Identifiable {
+    public var id: UUID = UUID()
+    var name: String
+    var imageName: String
+}
+
+public let allEffects = [EffectModel(name: "Jazz", imageName: "jazzEffectIcon"),
+                  EffectModel(name: "Loud", imageName: "loudEffectIcon"),
+                  EffectModel(name: "Music", imageName: "musicEffectIcon"),
+                  EffectModel(name: "Party", imageName: "partyEffectIcon"),
+                  EffectModel(name: "Pop", imageName: "popEffectIcon"),
+]
+
+public class CoreDataManager: ObservableObject {
+    let container = NSPersistentContainer(name: "BassBooster")
+    
+    public init() {
+        container.loadPersistentStores { description, error in
+            if let error = error {
+                print(error.localizedDescription)
+                return
+            }
+        }
+        self.container.viewContext.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
+    }
+    
+    func saveSong(newSong: SongModel) -> SongEntity? {
+        let song = SongEntity(context: container.viewContext)
+        song.id = newSong.id
+        song.name = newSong.name
+        song.artist = newSong.artist
+        song.imageID = newSong.imageID
+        song.totalDuration = newSong.totalDuration
+        song.isFavorite = newSong.isFavorite
+        song.bookmarkData = newSong.bookmarkData
+        song.isOnboarding = newSong.isOnboarding
+        
+        do {
+            try container.viewContext.save()
+            return song
+        } catch let error {
+            print(error.localizedDescription)
+            return nil
+        }
+    }
+    
+    func renameSong(song: SongEntity, name: String) {
+        song.name = name
+        
+        do {
+            try container.viewContext.save()
+        } catch let error {
+            print(error.localizedDescription)
+        }
+    }
+    
+    func updateIsFavorite(song: SongEntity, isFavorite: Bool) {
+        song.isFavorite = isFavorite
+        
+        do {
+            try container.viewContext.save()
+        } catch let error {
+            print(error.localizedDescription)
+        }
+    }
+    
+    func getAllSongs() -> [SongEntity] {
+        let request: NSFetchRequest<SongEntity> = SongEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "isOnboarding == false")
+        
+        do {
+            return try container.viewContext.fetch(request)
+        } catch {
+            print(error.localizedDescription)
+            return []
+        }
+    }
+    
+    func getAllFavoriteSongs() -> [SongEntity] {
+        let request: NSFetchRequest<SongEntity> = SongEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "isFavorite == true")
+        
+        do {
+            return try container.viewContext.fetch(request)
+        } catch {
+            print("Failed to fetch original songs: \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    func getAllOnboardingSongs() -> [SongEntity] {
+        let request: NSFetchRequest<SongEntity> = SongEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "isOnboarding == true")
+        
+        do {
+            return try container.viewContext.fetch(request)
+        } catch {
+            print("Failed to fetch original songs: \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    func deleteAllOnboarding() {
+        let request: NSFetchRequest<SongEntity> = SongEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "isOnboarding == true")
+        
+        do {
+            let copies = try container.viewContext.fetch(request)
+            
+            for copy in copies {
+                container.viewContext.delete(copy)
+            }
+            
+            try container.viewContext.save()
+            print("\(copies.count) onboarding songs deleted successfully.")
+        } catch {
+            print("Failed to delete copies: \(error.localizedDescription)")
+        }
+    }
+    
+    func deleteSong(song: SongEntity) {
+        container.viewContext.delete(song)
+        try? container.viewContext.save()
     }
 }
