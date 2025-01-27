@@ -451,5 +451,214 @@ public struct PaywallView: View {
     }
 }
     
-
+public struct SettingsView: View {
+    @EnvironmentObject private var purchaseManager: PurchaseManager
+    @Environment(\.dismiss) private var dismiss
+    
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            VStack {
+                HStack {
+                    CustomBackButton(dismiss: self.dismiss)
+                    Spacer()
+                    Text("Settings")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding()
+                    Spacer()
+                    CustomBackButton(dismiss: self.dismiss)
+                        .opacity(0)
+                        .disabled(true)
+                }
+                .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .top))
  
+                VStack(spacing: 12) {
+                    Button(action: {
+                        if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+                            DispatchQueue.main.async {
+                                SKStoreReviewController.requestReview(in: scene)
+                            }
+                        }
+                    }) {
+                        HStack {
+                            Image("rateUsIcon")
+                                .frame(width: 25, height: 25)
+                                .padding(.leading, 10)
+                            Text("Rate Our App")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal)
+                            Spacer()
+                            Image("arrowBlueIcon")
+                                .padding(.horizontal)
+                        }
+                        .frame(height: 60)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    
+                    Button(action: {
+                        SupportEmailService().send(toAddress: LinksConstants.support)
+                    }) {
+                        HStack {
+                            Image("contactUsIcon")
+                                .frame(width: 25, height: 25)
+                                .padding(.leading, 10)
+                            Text("Contact Us")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal)
+                            Spacer()
+                            Image("arrowBlueIcon")
+                                .padding(.horizontal)
+                        }
+                        .frame(height: 60)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    
+                    Button(action: {
+                        if let privacyURL = URL(string: LinksConstants.privacy) {
+                            if UIApplication.shared.canOpenURL(privacyURL) {
+                                UIApplication.shared.open(privacyURL, options: [:], completionHandler: nil)
+                            }
+                        }
+                    }) {
+                        HStack {
+                            Image("privacyIcon")
+                                .frame(width: 25, height: 25)
+                                .padding(.leading, 10)
+                            Text("Privacy Policy")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal)
+                            Spacer()
+                            Image("arrowBlueIcon")
+                                .padding(.horizontal)
+                        }
+                        .frame(height: 60)
+                        .frame(maxWidth: .infinity)
+
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    
+                    Button(action: {
+                        if let termsURL = URL(string: LinksConstants.terms) {
+                            if UIApplication.shared.canOpenURL(termsURL) {
+                                UIApplication.shared.open(termsURL, options: [:], completionHandler: nil)
+                            }
+                        }
+                    }) {
+                        HStack {
+                            Image("termsIcon")
+                                .frame(width: 25, height: 25)
+                                .padding(.leading, 10)
+                            Text("Terms Of Use")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal)
+                            Spacer()
+                            Image("arrowBlueIcon")
+                                .padding(.horizontal)
+                        }
+                        .frame(height: 60)
+                        .frame(maxWidth: .infinity)
+     
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                   
+                    Spacer()
+                }
+                .onAppear {
+                    purchaseManager.checkSubscriptionStatus()
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+        }
+    }
+}
+
+fileprivate struct SupportEmailService {
+    let subject: String = "App Feedback"
+    let messageHeader: String = "Please describe your problem!"
+    var body: String = ""
+    
+    func send(toAddress: String) {
+        let urlString = "mailto:\(toAddress)?subject=\(subject.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "")&body=\(body.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "")"
+        guard let url = URL(string: urlString) else { return }
+        
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+ 
+struct CustomBackButton: View {
+    let dismiss: DismissAction
+    
+    var body: some View {
+        Button {
+            dismiss()
+        } label: {
+            HStack {
+                Image("backButtonIcon")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 24, height: 24)
+                    .foregroundColor(.white)
+                Text("Back")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+        }
+    }
+}
+
+@MainActor
+class PurchaseManager: NSObject, ObservableObject {
+    @Published var isPremium: Bool = false
+    
+    override init() {
+        super.init()
+        checkSubscriptionStatus()
+    }
+    
+    func checkSubscriptionStatus() {
+        Task {
+            if let productID = await fetchCurrentEntitlement() {
+                isPremium = true
+            } else {
+                isPremium = false
+            }
+        }
+    }
+    
+    func fetchCurrentEntitlement() async -> String? {
+        do {
+            for try await result in Transaction.currentEntitlements {
+                guard case .verified(let transaction) = result else {
+                    continue
+                }
+                return transaction.productID
+            }
+        }
+        return nil
+    }
+}
