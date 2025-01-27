@@ -6,6 +6,7 @@ import AVFoundation
 import CoreData
 import MediaPlayer
 import ApphudSDK
+import Combine
 
 public enum Tab: String {
     case Home = "homeTabIcon"
@@ -249,7 +250,7 @@ public struct OnboardingStepView: View {
                 .padding(.bottom, UIScreen.main.bounds.height <= 667 ? 140:90)
             }
             .fullScreenCover(isPresented: $showTabBar) {
-//                TabBarView()
+                TabBarView()
             }
         } else {
             // Fallback on earlier versions
@@ -428,7 +429,7 @@ public struct PaywallView: View {
                 }
             }
             .fullScreenCover(isPresented: $showTabBar, content: {
-//                TabBarView()
+                TabBarView()
             })
             .onChange(of: showTabBar) { newValue in
                 if newValue {
@@ -1756,5 +1757,1755 @@ public struct SearchBar: View {
                     .opacity(0.2)
             }
         )
+    }
+}
+
+public struct MainView: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    @GestureState var dragOffset = CGSize.zero
+    
+    public var body: some View {
+            TabBarView()
+            .minimizableView(content: { MainPlayerView()
+            },dragOffset: $dragOffset, dragUpdating: { (value, state, _) in
+                state = value.translation
+                self.dragUpdated(value: value)
+            }, dragOnChanged: { (value) in
+                
+            }, dragOnEnded: { (value) in
+                self.dragOnEnded(value: value)
+            }, minimizedBottomMargin: UIDevice.current.hasNotch ? 95 : 80, settings: MiniSettings(minimizedHeight: 70))
+            .environmentObject(self.viewModel.miniHandler)
+            .preferredColorScheme(.dark)
+    }
+    
+    func dragUpdated(value: DragGesture.Value) {
+        if self.viewModel.miniHandler.isMinimized == false && value.translation.height > 0   { // expanded state
+            self.viewModel.miniHandler.draggedOffsetY = value.translation.height  // divide by a factor > 1 for more "inertia"
+        } else if self.viewModel.miniHandler.isMinimized && value.translation.height < 0   {// minimized state
+            if self.viewModel.miniHandler.draggedOffsetY >= -60 {
+                self.viewModel.miniHandler.draggedOffsetY = value.translation.height // divide by a factor > 1 for more "inertia"
+            }
+        }
+    }
+    
+    func dragOnEnded(value: DragGesture.Value) {
+        if self.viewModel.miniHandler.isMinimized == false && value.translation.height > 90  {
+            self.viewModel.miniHandler.minimize()
+            
+        } else if self.viewModel.miniHandler.isMinimized &&  value.translation.height <= -60 {
+            self.viewModel.miniHandler.expand()
+        }
+        self.viewModel.miniHandler.draggedOffsetY = 0
+    }
+}
+
+public class TabBarViewModel: ObservableObject {
+    // MARK: - TAB BAR
+    @Published var currentTab: Tab = .Home
+    
+    // MARK: - DETAIL VIEW
+    @Published var showDetail = false
+    @Published var showCategories = false
+    @Published var shouldReturnToTodayView = false
+    
+    func returnToTodayView() {
+        shouldReturnToTodayView = true
+    }
+}
+
+public struct TabBarView: View {
+    
+    @StateObject var baseData = TabBarViewModel()
+    @State private var showingSheet = false
+    
+    // MARK: - HIDE TAB BAR
+    public init() {
+        UITabBar.appearance().isHidden = true
+    }
+    
+    public var body: some View {
+        TabView(selection: $baseData.currentTab) {
+            PlaylistsView()
+                .tag(Tab.Home)
+            SearchView()
+                .tag(Tab.Search)
+            MySongsView()
+                .tag(Tab.MySongs)
+        }
+        .environmentObject(baseData)
+        
+        .overlay(
+            // MARK: - CUSTOM TAB BAR
+            HStack(spacing: 0) {
+                // MARK: - TAB BUTTON
+                TabButton(Tab: .Home, label: "Home")
+                TabButton(Tab: .Search, label: "Search")
+                TabButton(Tab: .MySongs, label: "Songs")
+            }
+                .padding()
+                .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .bottom))
+            //MARK: - HIDE TAB ON DETAIL VIEW
+                .offset(y: baseData.showDetail ? 200 : 0), alignment: .bottom)
+    }
+    
+    @ViewBuilder
+    func TabButton(Tab: Tab, label: String) -> some View {
+        Button {
+            baseData.currentTab = Tab
+        } label: {
+            VStack(spacing: 2) {
+                Image(Tab.rawValue)
+                    .resizable()
+                    .renderingMode(.template)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 30, height: 30)
+                    .foregroundColor(baseData.currentTab == Tab ? .white : .white.opacity(0.2))
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(baseData.currentTab == Tab ? .white : .white.opacity(0.2))
+            }
+            .padding(.bottom)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+public struct SearchView: View {
+    @EnvironmentObject private var purchaseManager: PurchaseManager
+    @EnvironmentObject var viewModel: SongViewModel
+    @Environment(\.presentationMode) var presentationMode
+    @State private var isOpenPremium = false
+    @State private var isOpenSettings = false
+    @State var searchText: String = ""
+    
+    var filteredTracks: [SongEntity] {
+        if searchText.isEmpty {
+            // If the search query is empty, return the original array (unfiltered)
+            return []
+        } else {
+            // If there is a search query, filter and sort the array
+            let filteredTracks = viewModel.allTracks.filter { track in
+                // Add your filtering condition here, for example, if you want to match the track name
+                if let trackName = track.name {
+                    return trackName.lowercased().contains(searchText.lowercased())
+                } else {
+                    return false
+                }
+            }
+            
+            // Sort the filtered array, you can change the sorting criteria based on your requirement
+            let sortedTracks = filteredTracks.sorted { (track1, track2) in
+                return track1.name ?? "" < track2.name ?? ""
+            }
+            
+            return sortedTracks
+        }
+    }
+    
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            VStack {
+                HStack {
+                    Button {
+                        isOpenSettings = true
+                    } label: {
+                        Image("settingsDotsIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 5)
+                    }
+                    .padding(.leading)
+                    Spacer()
+                    Text("Search")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding()
+                    Spacer()
+                    Button {
+                        isOpenPremium = true
+                    } label: {
+                        Image("crownPremiumIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 40)
+                        
+                    }
+                    .opacity(purchaseManager.isPremium ? 0 : 1)
+                    .disabled(purchaseManager.isPremium)
+                    .padding(.trailing)
+                }
+                .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .top))
+                
+                Spacer()
+                
+                VStack {
+                    SearchBar(text: $searchText)
+                    if filteredTracks.isEmpty {
+                        Spacer()
+                        EmptyListView(title: "Search Your Songs!", image: "searchEmptyIcon")
+                        
+                    } else {
+                        ScrollView(showsIndicators: false) {
+                            VStack {
+                                ForEach(filteredTracks.reversed(), id: \.id) { track in
+                                    TrackListCell(track: track)
+                                }
+                            }
+                        }
+                        .padding(.top)
+                        .padding(.horizontal)
+                    }
+                    Spacer()
+                }
+                .padding(.top)
+            }
+        }
+        .fullScreenCover(isPresented: $isOpenSettings) {
+            SettingsView()
+        }
+        .fullScreenCover(isPresented: $isOpenPremium) {
+            PaywallView(showTabBar: false)
+        }
+        .onAppear {
+            purchaseManager.checkSubscriptionStatus()
+        }
+    }
+}
+
+public struct BoostConfigView: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    
+    @State private var is3DSurroundEnabled = false
+    @State private var isBassBoostEnabled = false
+    @State private var isSpeedEnabled = false
+    @State private var isPitchEnabled = false
+    
+    @State private var bassBoost: Double = 0
+    @State private var speed: Double = 0
+    @State private var reverb: Double = 0
+    @State private var pitch: Double = 0
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack {
+                Capsule()
+                    .fill(Color.gray)
+                    .frame(width: 70, height: 5)
+                    .padding(.top, 5)
+                HStack {
+                    Spacer()
+                    Text("Boost on")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.top)
+                    Spacer()
+                }
+            }
+            .padding(.top, 10)
+            Divider()
+                .background(.white.opacity(0.2))
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    
+                    VStack {
+                        ToggleRow(title: "3D Surround", isOn: $is3DSurroundEnabled)
+                            .onChange(of: is3DSurroundEnabled) { value in
+                                viewModel.toggle3DSurround(value)
+                                if !value {
+                                    reverb = 0
+                                    viewModel.reverb = 0
+                                }
+                            }
+                        
+                        LinearGradientSlider(value: $reverb, range: 1...100, step: 1, label: "")
+                            .disabled(!is3DSurroundEnabled)
+                            .opacity(is3DSurroundEnabled ? 1 : 0.5)
+                            .onChange(of: reverb) { value in
+                                viewModel.updateReverb(value: value)
+                            }
+                    }
+                    .padding(.vertical)
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    VStack {
+                        ToggleRow(title: "Bass Boost", isOn: $isBassBoostEnabled)
+                            .onChange(of: isBassBoostEnabled) { value in
+                                viewModel.toggleBassBoost(value)
+                                if !value {
+                                    bassBoost = 0
+                                    viewModel.bassBoost = 0
+                                }
+                            }
+                        
+                        LinearGradientSlider(value: $bassBoost, range: -10...24, step: 1, label: "")
+                            .disabled(!isBassBoostEnabled)
+                            .opacity(isBassBoostEnabled ? 1 : 0.5)
+                            .onChange(of: bassBoost) { value in
+                                viewModel.updateBassBoost(value: value)
+                            }
+                    }
+                    .padding(.vertical)
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    VStack {
+                        ToggleRow(title: "Speed", isOn: $isSpeedEnabled)
+                            .onChange(of: isSpeedEnabled) { value in
+                                viewModel.toggleSpeedBoost(value)
+                                if !value {
+                                    speed = 1
+                                    viewModel.speed = 1
+                                }
+                            }
+                        
+                        LinearGradientSlider(value: $speed, range: 0.5...2, step: 0.1, label: "")
+                            .disabled(!isSpeedEnabled)
+                            .opacity(isSpeedEnabled ? 1 : 0.5)
+                            .onChange(of: speed) { value in
+                                viewModel.updateSpeed(value: value)
+                            }
+                    }
+                    .padding(.vertical)
+                    Divider()
+                        .background(.white.opacity(0.2))
+                    VStack {
+                        ToggleRow(title: "Pitch", isOn: $isPitchEnabled)
+                            .onChange(of: isPitchEnabled) { value in
+                                viewModel.togglePitchBoost(value)
+                                if !value {
+                                    pitch = 0
+                                    viewModel.pitch = 0
+                                }
+                            }
+                        
+                        LinearGradientSlider(value: $pitch, range: -10...10, step: 0.2, label: "")
+                            .disabled(!isPitchEnabled)
+                            .opacity(isPitchEnabled ? 1 : 0.5)
+                            .onChange(of: pitch) { value in
+                                viewModel.updatePitch(value: value)
+                            }
+                    }
+                    .padding(.vertical)
+                }
+
+            }
+            Spacer()
+        }
+        .padding(.vertical)
+        .background(Color.black.ignoresSafeArea())
+        .onAppear {
+            is3DSurroundEnabled = viewModel.is3DSurroundEnabled
+            isBassBoostEnabled = viewModel.isBassBoostEnabled
+            isSpeedEnabled = viewModel.isSpeedEnabled
+            isPitchEnabled = viewModel.isPitchEnabled
+            
+            bassBoost = viewModel.bassBoost
+            speed = viewModel.speed
+            reverb = viewModel.reverb
+            pitch = viewModel.pitch
+        }
+    }
+}
+
+public struct ToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+    
+    public init(title: String, isOn: Binding<Bool>) {
+        self.title = title
+        self._isOn = isOn
+    }
+    
+    public var body: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(.white)
+            
+            Spacer()
+            
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(SwitchToggleStyle(tint: Color(hex: "#FF6504") ?? .black))
+        }
+        .padding(.horizontal)
+    }
+}
+
+public struct LinearGradientSlider: View {
+    @Binding var value: Double
+    var colors: [Color] = [Color(hex: "#A63103") ?? .black,
+                           Color(hex: "#FF6504") ?? .black,
+                           Color(hex: "#FFFF0C") ?? .black]
+    var range: ClosedRange<Double>
+    var step: Double
+    var label: String
+    
+    public init(value: Binding<Double>, range: ClosedRange<Double>, step: Double, label: String) {
+        self._value = value
+        self.range = range
+        self.step = step
+        self.label = label
+    }
+    
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: colors),
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .mask(Slider(value: $value, in: range, step: step))
+            
+            // Dummy replicated slider, to allow sliding
+            Slider(value: $value, in: range, step: step, label: { Text(label).font(Font.body.lowercaseSmallCaps()) })
+            //            .opacity(0.05) // Opacity is the trick here.
+                .accentColor(.clear)
+        }
+        .frame(height: 30)
+        .padding(.horizontal)
+    }
+}
+
+public struct PlaylistsView: View {
+    @EnvironmentObject private var purchaseManager: PurchaseManager
+    @EnvironmentObject var songsVM: SongViewModel
+    @State private var isOpenSettings = false
+    @State private var isOpenPremium = false
+    
+    public var body: some View {
+        NavigationView {
+            ZStack {
+                LinearGradient(
+                    gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                VStack {
+                    HStack {
+                        Button {
+                            isOpenSettings = true
+                        } label: {
+                            Image("settingsDotsIcon")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 5)
+                        }
+                        .padding(.leading)
+                        Spacer()
+                        Text("Boost Music")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding()
+                        Spacer()
+                        Button {
+                            isOpenPremium = true
+                        } label: {
+                            Image("crownPremiumIcon")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 40)
+                        }
+                        .opacity(purchaseManager.isPremium ? 0 : 1)
+                        .disabled(purchaseManager.isPremium)
+                        .padding(.trailing)
+                    }
+                    .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .top))
+                    
+                    
+                    ScrollView(showsIndicators: false) {
+//                        VStack(alignment: .leading) {
+//                            HStack {
+//                                Text("Playlist")
+//                                    .font(.system(size: 20, weight: .bold))
+//                                    .foregroundColor(.white)
+//                                    .padding(.vertical)
+//                                Divider()
+//                                    .frame(maxWidth: .infinity)
+//                                    .background(.white.opacity(0.2))
+//                                    .frame(height: 1)
+//                            }
+//                            NavigationLink {
+//                                DetailedPlaylistView()
+//                            } label: {
+//                                PlaylistCell()
+//                            }
+//                        }
+                        
+                        VStack {
+                            HStack {
+                                Text("Favorites")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.vertical)
+                                Divider()
+                                    .frame(maxWidth: .infinity)
+                                    .background(.white.opacity(0.2))
+                                    .frame(height: 1)
+                            }
+                            if songsVM.favoriteTracks.isEmpty {
+                                EmptyListView(title: "No favorites\nGo ahead and like some songs!", image: "heartSlashIcon")
+                                Spacer()
+                            } else {
+                                ForEach(Array(songsVM.favoriteTracks.reversed().enumerated()), id: \.element.id) { index, song  in
+                                    FavoriteTrackCell(track: song)
+                                        .padding(.bottom, index == songsVM.favoriteTracks.count - 1 ? 80 : 0)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    Spacer()
+                }
+            }
+            .fullScreenCover(isPresented: $isOpenPremium) {
+                PaywallView(showTabBar: false)
+            }
+            
+            .fullScreenCover(isPresented: $isOpenSettings) {
+                SettingsView()
+            }
+            .onAppear {
+                purchaseManager.checkSubscriptionStatus()
+            }
+        }
+    }
+}
+
+public struct FavoriteTrackCell: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    @State var track: SongEntity
+    @State var showAlertDelete: Bool = false
+    @State private var showActionSheet = false
+    
+    public var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(action: {
+                viewModel.togglePlayback(track: track, playlist: Array(viewModel.favoriteTracks.reversed()))
+            }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        if let itemID = track.imageID?.uuidString,
+                           let dataImage = FileHandler.shared.loadFile(from: itemID),
+                           let uiImage = UIImage(data: dataImage) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .frame(width: 48, height: 48)
+                                .cornerRadius(10)
+                        } else {
+                            Image("musicEmptyIcon")
+                                .resizable()
+                                .frame(width: 48, height: 48)
+                                .cornerRadius(10)
+                        }
+                    }
+                    VStack(alignment: .leading) {
+                        Text(track.name ?? "")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                        Text("\(track.artist ?? "") • \(track.totalDuration.formatTime())")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.trailing)
+                    Spacer()
+                }
+                .padding(.vertical)
+                
+            }
+            .frame(height: 60)
+            .buttonStyle(NoTapAnimationStyle())
+            
+            Button {
+                showActionSheet.toggle()
+            } label: {
+                Image("settingsDotsIcon")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 25, height: 40)
+            }
+        }
+        .padding(8)
+        .background((track.id == viewModel.selectedTrack?.id ? Color.white.opacity(0.05) : Color.clear))
+        .cornerRadius(12)
+        .actionSheet(isPresented: $showActionSheet) {
+            ActionSheet(title: Text("Choose Action"), buttons: [
+                .default(Text("Remove From Favorites"), action: {
+                    removeFromFavorites()
+                }),
+                .destructive(Text("Delete"), action: {
+                    showAlertDelete.toggle()
+                }),
+                .cancel()
+            ])
+        }
+        .alert(isPresented: $showAlertDelete) {
+            Alert(
+                title: Text("Are you sure you want to delete?"),
+                primaryButton: .destructive(Text("Delete"), action: {
+                    deleteTrack()
+                }),
+                secondaryButton: .cancel(Text("Cancel")))
+        }
+    }
+    
+    func removeFromFavorites() {
+        if let track = viewModel.selectedTrack {
+            viewModel.updateIsFavorite(song: track, isFavorite: !track.isFavorite)
+        }
+    }
+    
+    func deleteTrack() {
+        viewModel.deleteSong(song: track)
+        
+        if let trackID = track.id {
+            FileHandler.shared.deleteFile(fileID: trackID.uuidString)
+            // Remove the tracks from the current playlist
+            viewModel.currentPlaylist.removeAll { $0.id == trackID }
+            
+            if let currentTrack = viewModel.selectedTrack, currentTrack.id == trackID {
+                viewModel.stopCurrentPlay()
+            }
+        }
+    }
+}
+
+public struct PlaylistCell: View {
+    @EnvironmentObject var viewModel: SongViewModel
+
+    public var body: some View {
+        VStack(alignment: .leading) {
+            HStack(spacing: 10) {
+                
+                if let itemID = viewModel.onboardingTracks.reversed().first?.imageID?.uuidString,
+                   let dataImage = FileHandler.shared.loadFile(from: itemID),
+                   let uiImage = UIImage(data: dataImage) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .frame(width: 157, height: 157)
+                        .cornerRadius(8)
+                } else {
+                    Image("musicEmptyIcon")
+                        .resizable()
+                        .frame(width: 157, height: 157)
+                        .cornerRadius(8)
+                }
+                
+                VStack(spacing: 10) {
+                    ForEach(viewModel.onboardingTracks.reversed().prefix(3).dropFirst(), id: \.self) { image in
+                        
+                        if let itemID = image.imageID?.uuidString,
+                           let dataImage = FileHandler.shared.loadFile(from: itemID),
+                           let uiImage = UIImage(data: dataImage) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .frame(width: 76, height: 76)
+                                .cornerRadius(8)
+                        } else {
+                            Image("musicEmptyIcon")
+                                .resizable()
+                                .frame(width: 76, height: 76)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Onboarding Songs")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Text("\(viewModel.onboardingTracks.count) Songs")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+    }
+}
+
+public struct DetailedPlaylistView: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    @Environment(\.dismiss) private var dismiss
+    @GestureState private var dragOffset = CGSize.zero
+
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            VStack {
+                // Header
+                PlaylistHeaderView(dismiss: dismiss)
+
+                // Scrollable Content
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        PlaylistImageSection(viewModel: viewModel)
+                        PlaylistActionsSection(viewModel: viewModel)
+                        TrackListSection(viewModel: viewModel)
+                    }
+                    .padding(.bottom, calculateBottomPadding())
+                }
+                Spacer()
+            }
+            .navigationBarBackButtonHidden()
+            .navigationBarHidden(true)
+            .navigationTitle("")
+            .gesture(DragGesture().updating($dragOffset, body: { (value, state, transaction) in
+                if value.startLocation.x < 20 && value.translation.width > 100 {
+                    dismiss()
+                }
+            }))
+        }
+    }
+
+    private func calculateBottomPadding() -> CGFloat {
+        let hasNotch = UIDevice.current.hasNotch
+        return viewModel.miniHandler.isPresented
+            ? (hasNotch ? 135 : 135)
+            : (hasNotch ? 80 : 70)
+    }
+}
+
+// MARK: - Subviews
+
+private struct PlaylistHeaderView: View {
+    let dismiss: DismissAction
+
+    var body: some View {
+        HStack {
+            CustomBackButton(dismiss: dismiss)
+            Spacer()
+            Text("Onboarding Songs")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(.white)
+                .padding()
+            Spacer()
+            CustomBackButton(dismiss: dismiss)
+                .opacity(0)
+                .disabled(true)
+        }
+        .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .top))
+    }
+}
+
+private struct PlaylistImageSection: View {
+    let viewModel: SongViewModel
+
+    var body: some View {
+        if let itemID = viewModel.onboardingTracks.reversed().first?.imageID?.uuidString,
+           let dataImage = FileHandler.shared.loadFile(from: itemID),
+           let uiImage = UIImage(data: dataImage) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .frame(width: 250, height: 250)
+                .cornerRadius(8)
+        } else {
+            Image("musicEmptyIcon")
+                .resizable()
+                .frame(width: 250, height: 250)
+                .cornerRadius(8)
+        }
+    }
+}
+
+private struct PlaylistActionsSection: View {
+    let viewModel: SongViewModel
+
+    var body: some View {
+        HStack {
+            ImportButton(title: "Play", iconName: "playButtonIcon") {
+                if let firstTrack = viewModel.onboardingTracks.reversed().first {
+                    viewModel.togglePlayback(track: firstTrack, playlist: Array(viewModel.onboardingTracks))
+                }
+            }
+            .frame(width: 140)
+
+            ShuffleButton(title: "Suffle", iconName: "suffleIcon") {
+                if let randomTrack = viewModel.onboardingTracks.reversed().randomElement() {
+                    viewModel.togglePlayback(track: randomTrack, playlist: Array(viewModel.onboardingTracks))
+                }
+            }
+            .frame(width: 140, height: 50)
+        }
+    }
+}
+
+private struct TrackListSection: View {
+    let viewModel: SongViewModel
+
+    var body: some View {
+        VStack {
+            ForEach(Array(viewModel.onboardingTracks.reversed().enumerated()), id: \.element.id) { index, track in
+                TrackListCell(track: track, isShowEdit: false)
+                Divider()
+                    .background(.white.opacity(0.2))
+            }
+        }
+        .padding(.horizontal)
+    }
+}
+
+public struct MainPlayerView: View {
+    @EnvironmentObject var miniHandler: MinimizableViewHandler
+    @EnvironmentObject var viewModel: SongViewModel
+    
+    @State var currentTime: Double = 0
+    @State private var timer: Timer?
+    @State var isFavorite: Bool = false
+    @State private var sizeImage = UIScreen.main.bounds.width - 120
+    
+    public var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                if self.viewModel.miniHandler.isMinimized {
+                    BlurView()
+                    // .cornerRadius(20)
+                } else {
+                    LinearGradient(
+                        gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                }
+                VStack {
+                    VStack {
+                        Capsule()
+                            .fill(Color.gray)
+                            .frame(width: 70, height: 5)
+                            .padding(.top, 5)
+                    }
+                    .frame(width: self.miniHandler.isMinimized == false ? nil : 0, height: self.miniHandler.isMinimized == false ? nil : 0).opacity(self.miniHandler.isMinimized ? 0 : 1)
+                    .padding(.top, self.miniHandler.isMinimized ? 0 : 10)
+                    
+                    if miniHandler.isMinimized {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Button {
+                                    viewModel.togglePlayback()
+                                } label: {
+                                    Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 15, height: 15)
+                                        .foregroundColor(.white)
+                                }
+                                .buttonStyle(NoTapAnimationStyle())
+                                .frame(width: 44, height: 44)
+                                .background(Color.black.opacity(0.2))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.white.opacity(0.2), lineWidth: 2)
+                                )
+                                .cornerRadius(8)
+                                
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(viewModel.selectedTrack?.name ?? "Be Yourself")
+                                        .font(.system(size: 17, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .lineLimit(1)
+                                    Text("\(viewModel.selectedTrack?.artist ?? "") • \(viewModel.selectedTrack?.totalDuration.formatTime() ?? "")")
+                                        .font(.system(size: 14, weight: .regular))
+                                        .lineLimit(1)
+                                        .foregroundColor(Color(red: 0.44, green: 0.44, blue: 0.44))
+                                }
+                                Spacer()
+                                Button {
+                                    viewModel.onNextTrack()
+                                } label: {
+                                    Image(systemName: "forward.end.fill")
+                                        .resizable()
+                                        .foregroundColor(.white)
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 25, height: 25)
+                                }
+                                .padding()
+                                .buttonStyle(NoTapAnimationStyle())
+                                BoostButton(isMini: true, imageName: "boostMiniIcon", width: 44, height: 44)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                    } else {
+                        self.expandedControls
+                    }
+                }
+            }
+            .onTapGesture {
+                if self.viewModel.miniHandler.isMinimized {
+                    self.viewModel.miniHandler.expand()
+                }
+            }
+        }.transition(AnyTransition.move(edge: .bottom))
+    }
+    
+    var expandedControls: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                if let track = viewModel.selectedTrack,
+                   let itemID = track.imageID?.uuidString,
+                   let dataImage = FileHandler.shared.loadFile(from: itemID),
+                   let uiImage = UIImage(data: dataImage) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: sizeImage, height: sizeImage)
+                        .cornerRadius(6)
+                } else {
+                    Image("musicEmptyIcon")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: sizeImage, height: sizeImage)
+                        .cornerRadius(6)
+                }
+            }
+            .padding(.top, 25)
+            HorizontalEffectScrollView(effects: allEffects)
+            
+            Spacer()
+            VStack {
+                HStack {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(viewModel.selectedTrack?.name ?? "Be Yourself")
+                                .font(.system(size: 25, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.trailing, 25)
+                                .lineLimit(2)
+                            Spacer()
+                            BoostButton(isMini: false, imageName: "boostMaxIcon", width: 107, height: 40)
+                        }
+                        Text(viewModel.selectedTrack?.artist ?? "Frank Ocean")
+                            .font(.system(size: 18, weight: .regular))
+                            .foregroundColor(Color(red: 0.47, green: 0.47, blue: 0.47))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    
+                    Spacer()
+                }
+                .padding()
+                
+                VStack {
+                    MusicProgressSlider(value: $currentTime, currentTime: currentTime, inRange: 0...(viewModel.selectedTrack?.totalDuration ?? 0), totalTime: viewModel.selectedTrack?.totalDuration ?? 0) { started in
+                        if !started {
+                            viewModel.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600))
+                            viewModel.updateNowPlayingInfo(currentTime: currentTime)
+                        }
+                    }
+                    .id("ProgressBar")
+                    .frame(height: 10)
+                    .padding(.vertical)
+                    .onAppear {
+                        currentTime = viewModel.currentTime
+                        startTimer()
+                    }
+                    
+                    VStack(spacing: 16) {
+                        HStack {
+                            Button {
+                                viewModel.repeatMode = viewModel.repeatMode.nextMode
+                                viewModel.setupPlaylist(mode: viewModel.repeatMode)
+                            } label: {
+                                Image(systemName: viewModel.repeatMode.image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 20, height: 20)
+                                    .foregroundColor(viewModel.repeatMode == .once ? .white.opacity(0.5) : .white)
+                            }
+                            .buttonStyle(NoTapAnimationStyle())
+                            
+                            Spacer ()
+                            
+                            HStack(spacing: 40) {
+                                Button {
+                                    viewModel.onPreviousTrack()
+                                } label: {
+                                    Image(systemName: "backward.end.fill")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 25, height: 25)
+                                }
+                                .buttonStyle(NoTapAnimationStyle())
+                                Button {
+                                    viewModel.togglePlayback()
+                                } label: {
+                                    Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 40, height: 40)
+                                        .foregroundColor(.white)
+                                }
+                                .buttonStyle(NoTapAnimationStyle())
+                                .frame(width: 85, height: 85)
+                                .background(Color.black.opacity(0.2))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.white.opacity(0.2), lineWidth: 2)
+                                )
+                                .cornerRadius(8)
+                                Button {
+                                    viewModel.onNextTrack()
+                                } label: {
+                                    Image(systemName: "forward.end.fill")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 25, height: 25)
+                                }
+                                .buttonStyle(NoTapAnimationStyle())
+                            }
+                            
+                            Spacer()
+                            
+                            Button {
+                                if let track = viewModel.selectedTrack {
+                                    viewModel.updateIsFavorite(song: track, isFavorite: !track.isFavorite)
+                                    isFavorite.toggle()
+                                }
+                            } label: {
+                                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 20, height: 20)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .padding(.vertical)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 35)
+            }
+            .background(Color(hex: "#292929")?.ignoresSafeArea())
+        }
+        .onAppear {
+            viewModel.updateNowPlayingInfo(currentTime: currentTime)
+            if let track = viewModel.selectedTrack {
+                isFavorite = track.isFavorite
+            }
+        }
+        .onDisappear {
+            stopTimer()
+        }
+        .onChange(of: viewModel.selectedTrack, perform: { value in
+            stopTimer()
+            startTimer()
+            
+            if let track = viewModel.selectedTrack {
+                isFavorite = track.isFavorite
+            }
+        })
+    }
+    
+    private func startTimer() {
+        var count = 0
+        timer = Timer.scheduledTimer(withTimeInterval: 0, repeats: true) { _ in
+            print(viewModel.currentTime)
+            currentTime = viewModel.currentTime
+            if count == 0 {
+                viewModel.updateNowPlayingInfo(currentTime: currentTime)
+                count += 1
+            }
+        }
+    }
+    
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
+public struct NoTapAnimationStyle: PrimitiveButtonStyle {
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .onTapGesture(perform: configuration.trigger)
+    }
+}
+
+public struct MinimizableView<MainContent: View>: View {
+    @EnvironmentObject var minimizableViewHandler: MinimizableViewHandler
+    
+    var geometry: GeometryProxy
+    var contentView:  MainContent
+    var minimizedBottomMargin: CGFloat
+    var settings: MiniSettings
+    
+    var offsetY: CGFloat {
+        
+        if self.minimizableViewHandler.isMinimized {
+            return self.minimizableViewHandler.draggedOffsetY < 0 ? self.minimizableViewHandler.draggedOffsetY : 0
+        } else {
+            return self.minimizableViewHandler.draggedOffsetY
+        }
+    }
+    
+    var positionY: CGFloat {
+        if self.minimizableViewHandler.isMinimized {
+            let dragCorrection = self.minimizableViewHandler.draggedOffsetY < 0 ? self.minimizableViewHandler.draggedOffsetY  : 0
+            return geometry.size.height - settings.minimizedHeight / 2 - geometry.safeAreaInsets.bottom - minimizedBottomMargin - dragCorrection / 2
+        } else {
+            return geometry.size.height - (settings.overrideHeight ?? geometry.size.height) / 2
+            
+        }
+    }
+    
+    var frameHeight: CGFloat? {
+        
+        if self.minimizableViewHandler.isMinimized {
+            
+            let draggedOffset: CGFloat = self.minimizableViewHandler.draggedOffsetY < 0 ? self.minimizableViewHandler.draggedOffsetY * (-1) : 0
+            return self.settings.minimizedHeight + draggedOffset
+            
+        } else {
+            return self.settings.overrideHeight
+            
+        }
+    }
+    
+    public init(@ViewBuilder content: ()->MainContent, geometry: GeometryProxy, minimizedBottomMargin: CGFloat, settings: MiniSettings) {
+        
+        self.contentView = content()
+        self.geometry = geometry
+        self.minimizedBottomMargin = minimizedBottomMargin
+        self.settings = settings
+    }
+    
+    /**
+     Body of MinimizableView.
+     */
+    public var body: some View {
+        ZStack(alignment: .top) {
+            if self.minimizableViewHandler.isPresented == true {
+                self.contentView
+                    .clipped()
+            }
+        }
+        .frame(width: self.minimizableViewHandler.isMinimized ? geometry.size.width : geometry.size.width - self.settings.lateralMargin * 2, //self.settings.lateralMargin * 2
+               height: self.frameHeight)
+        .position(x: geometry.size.width / 2, y: self.positionY)
+        .offset(y: self.offsetY)
+    }
+}
+
+public struct MinimizableViewModifier<MainContent: View>: ViewModifier {
+    @EnvironmentObject var minimizableViewHandler: MinimizableViewHandler
+    
+    var contentView:  ()-> MainContent
+    var dragOffset: GestureState<CGSize>
+    var dragUpdating: (DragGesture.Value, inout CGSize, inout SwiftUICore.Transaction)->()
+    var dragOnChanged: (DragGesture.Value)->()
+    var dragOnEnded: (DragGesture.Value)->()
+    
+    var minimizedBottomMargin: CGFloat
+    var settings: MiniSettings
+    
+    public func body(content: Content) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: Alignment(horizontal: .center, vertical: .bottom)) {
+                content.zIndex(0)
+                if self.minimizableViewHandler.isPresented {
+                    MinimizableView(content: contentView, geometry: proxy, minimizedBottomMargin: minimizedBottomMargin, settings: settings)
+                        .environmentObject(self.minimizableViewHandler).opacity(self.minimizableViewHandler.isVisible ? 1 : 0)
+                        .gesture(DragGesture(minimumDistance: settings.minimumDragDistance,  coordinateSpace: .global)
+                            .onChanged(self.dragOnChanged)
+                            .updating(dragOffset, body:self.dragUpdating)
+                            .onEnded(self.dragOnEnded))
+                        .simultaneousGesture(MagnificationGesture().onEnded({ value in
+                            if self.minimizableViewHandler.draggedOffsetY > 10 || self.minimizableViewHandler.draggedOffsetY < 0 {
+                                self.minimizableViewHandler.minimize()
+                                self.minimizableViewHandler.draggedOffsetY = 0
+                            }
+                        }))
+                        .zIndex(1)
+                        .transition(AnyTransition.move(edge: .bottom))
+                }
+            }
+        }.edgesIgnoringSafeArea(settings.edgesIgnoringSafeArea)
+    }
+}
+
+public extension View {
+    func minimizableView<MainContent: View>(@ViewBuilder content: @escaping ()->MainContent, dragOffset:  GestureState<CGSize>, dragUpdating: @escaping (DragGesture.Value, inout CGSize, inout SwiftUICore.Transaction)->(), dragOnChanged: @escaping (DragGesture.Value)->(),  dragOnEnded: @escaping (DragGesture.Value)->(), minimizedBottomMargin: CGFloat = 81,  settings: MiniSettings = MiniSettings())->some View  {
+        self.modifier(MinimizableViewModifier(contentView: content, dragOffset: dragOffset , dragUpdating: dragUpdating, dragOnChanged: dragOnChanged,  dragOnEnded: dragOnEnded,   minimizedBottomMargin: minimizedBottomMargin, settings: settings))
+    }
+}
+
+public struct HorizontalEffectScrollView: View {
+    @State private var selectedEffect: UUID
+    let effects: [EffectModel]
+    
+    public init(effects: [EffectModel]) {
+        self.effects = effects
+        // По умолчанию выбрана центральная ячейка
+        _selectedEffect = State(initialValue: effects[effects.count / 2].id)
+    }
+    
+    public var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(effects) { effect in
+                        VStack(spacing: 8) {
+                            Button(action: {
+                                withAnimation {
+                                    selectedEffect = effect.id
+                                }
+                            }) {
+                                Image(effect.imageName)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: selectedEffect == effect.id ? 32 : 26, height: selectedEffect == effect.id ? 32 : 26)
+                                    .foregroundColor(selectedEffect == effect.id ? .white : .gray)
+                                
+                            }
+                            .frame(width: selectedEffect == effect.id ? 68 : 58,
+                                   height: selectedEffect == effect.id ? 68 : 58)
+                            .background(LinearGradient(gradient: Gradient(colors: selectedEffect == effect.id ?
+                                                                          [Color(hex: "#A63103") ?? .black,
+                                                                           Color(hex: "#FF6504") ?? .black,
+                                                                           Color(hex: "#FFFF0C") ?? .black] : [.white.opacity(0.1)]),
+                                                       
+                                                       startPoint: .topLeading,
+                                                       endPoint: .bottomTrailing))
+                            .cornerRadius(7)
+                            Text(effect.name)
+                                .font(.system(size: selectedEffect == effect.id ? 16 : 14, weight: selectedEffect == effect.id ? .bold : .regular ))
+                                .foregroundColor(selectedEffect == effect.id ? .white : .gray)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .frame(height: 120)
+            .onAppear {
+                DispatchQueue.main.async {
+                    proxy.scrollTo(selectedEffect, anchor: .center)
+                }
+            }
+        }
+    }
+}
+
+public struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
+    @Binding var value: T
+    let currentTime: Double
+    let inRange: ClosedRange<T>
+    let totalTime: Double
+    let height: CGFloat = 8
+    let onEditingChanged: (Bool) -> Void
+
+    // private variables
+    @State private var localRealProgress: T = 0
+    @State private var localTempProgress: T = 0
+    @GestureState private var isActive: Bool = false
+    @State private var progressDuration: T = 0
+        
+    public init(
+        value: Binding<T>,
+        currentTime: Double,
+        inRange: ClosedRange<T>,
+        totalTime: Double,
+        onEditingChanged: @escaping (Bool) -> Void
+    ) {
+        self._value = value
+        self.currentTime = currentTime
+        self.inRange = inRange
+        self.totalTime = totalTime
+        self.onEditingChanged = onEditingChanged
+    }
+    
+    public var body: some View {
+        GeometryReader { bounds in
+            ZStack(alignment: .leading) {
+                VStack {
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .frame(width: bounds.size.width, height: height)
+                            .opacity(0.3)
+                            .foregroundColor(Color.gray)
+                            .cornerRadius(10.0)
+                        
+                        Rectangle()
+                            .fill(LinearGradient(
+                                gradient: Gradient(colors: [Color(hex: "#A63103") ?? .black,
+                                                            Color(hex: "#FF6504") ?? .black,
+                                                            Color(hex: "#FFFF0C") ?? .black]),
+                                
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(height: height)
+                            .frame(width: max(bounds.size.width * CGFloat((localRealProgress + localTempProgress)), 0), alignment: .leading)
+                            .cornerRadius(10.0)
+                        
+                        Circle()
+                            .frame(height: 16)
+                            .foregroundColor(Color.white)
+                            .offset(x: max(bounds.size.width  * CGFloat((localRealProgress + localTempProgress)), 0) - 3)
+                    }
+                    
+                    
+                    HStack {
+                        if isActive {
+                            Text(progressDuration.asTimeString(style: .positional))
+                                .font(.system(size: 14, weight: .medium, design: .default))
+                                .foregroundColor(.white)
+                        } else {
+                            Text(currentTime.formatTime())
+                                .font(.system(size: 14, weight: .medium, design: .default))
+                                .foregroundColor(.white)
+                        }
+                        Spacer()
+                        Text(totalTime.formatTime())
+                            .font(.system(size: 14, weight: .medium, design: .default))
+                            .foregroundColor(Color(red: 0.47, green: 0.47, blue: 0.47))
+                    }
+                    .padding(.top, 3)
+                    
+                }
+            }
+            //.shadow(color: .black.opacity(0.1), radius: isActive ? 20 : 0, x: 0, y: 0)
+            .frame(width: bounds.size.width, alignment: .center)
+            .animation(animation, value: isActive)
+            .frame(width: bounds.size.width, height: bounds.size.height, alignment: .center)
+            
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .updating($isActive) { value, state, transaction in
+                    state = true
+                }
+                .onChanged { gesture in
+                    localTempProgress = T(gesture.translation.width / bounds.size.width)
+                    let prg = max(min((localRealProgress + localTempProgress), 1), 0)
+                    progressDuration = inRange.upperBound * prg
+                    value = max(min(getPrgValue(), inRange.upperBound), inRange.lowerBound)
+                }.onEnded { value in
+                    localRealProgress = max(min(localRealProgress + localTempProgress, 1), 0)
+                    localTempProgress = 0
+                    progressDuration = inRange.upperBound * localRealProgress
+                })
+            .onChange(of: isActive) { newValue in
+                value = max(min(getPrgValue(), inRange.upperBound), inRange.lowerBound)
+                onEditingChanged(newValue)
+            }
+            .onAppear {
+                localRealProgress = getPrgPercentage(value)
+                progressDuration = inRange.upperBound * localRealProgress
+            }
+            .onChange(of: value) { newValue in
+                if !isActive {
+                    localRealProgress = getPrgPercentage(newValue)
+                }
+            }
+        }
+    }
+    
+    private var animation: Animation {
+        if isActive {
+            return .spring()
+        } else {
+            return .spring(response: 0.5, dampingFraction: 0.5, blendDuration: 0.6)
+        }
+    }
+    
+    private func getPrgPercentage(_ value: T) -> T {
+        let range = inRange.upperBound - inRange.lowerBound
+        let correctedStartValue = value - inRange.lowerBound
+        let percentage = correctedStartValue / range
+        return percentage
+    }
+    
+    private func getPrgValue() -> T {
+        return ((localRealProgress + localTempProgress) * (inRange.upperBound - inRange.lowerBound)) + inRange.lowerBound
+    }
+}
+
+public struct MySongsView: View {
+    @EnvironmentObject private var purchaseManager: PurchaseManager
+    @State private var isOpenPremium = false
+    @State private var isOpenSettings = false
+    @EnvironmentObject var viewModel: SongViewModel
+    
+    public init() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Error setting up audio session: \(error)")
+        }
+    }
+    
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "#1c0d00") ?? .black, Color(hex: "#000000") ?? .black]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            VStack {
+                HStack {
+                    Button {
+                        isOpenSettings = true
+                    } label: {
+                        Image("settingsDotsIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 5)
+                    }
+                    .padding(.leading)
+                    Spacer()
+                    Text("My Songs")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding()
+                    Spacer()
+                    Button {
+                        isOpenPremium = true
+                    } label: {
+                        Image("crownPremiumIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 40)
+                    }
+                    .opacity(purchaseManager.isPremium ? 0 : 1)
+                    .disabled(purchaseManager.isPremium)
+                    .padding(.trailing)
+                }
+                .background(Color(hex: "#292929").ignoresSafeArea(.container, edges: .top))
+                
+                if viewModel.allTracks.isEmpty {
+                    Spacer()
+                    EmptyListView(title: "No songs yet!", image: "musicIcon")
+                    ImportHeaderView()
+                        .frame(width: UIScreen.main.bounds.width / 2)
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        VStack {
+                            ForEach(Array(viewModel.allTracks.reversed().enumerated()), id: \.element.id) { index, track in
+                                TrackListCell(track: track)
+                                //if index != viewModel.allTracks.count - 1 {
+                                Divider()
+                                    .background(.white.opacity(0.2))
+                                // }
+                            }
+                            ImportHeaderView()
+                                .frame(width: UIScreen.main.bounds.width / 2)
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, (viewModel.miniHandler.isPresented ? (UIDevice.current.hasNotch ? 135 : 135)
+                                           : (UIDevice.current.hasNotch ? 80 : 70)))
+                    }
+                }
+                Spacer()
+            }
+            .fullScreenCover(isPresented: $isOpenPremium) {
+                PaywallView(showTabBar: false)
+            }
+            .fullScreenCover(isPresented: $isOpenSettings) {
+                SettingsView()
+            }
+            .onAppear {
+                purchaseManager.checkSubscriptionStatus()
+            }
+        }
+    }
+}
+
+public struct TrackListCell: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    @State var track: SongEntity
+    @State private var showActionSheet = false
+    @State var isShowEdit = true
+    
+    public init(track: SongEntity, isShowEdit: Bool? = true) {
+        self._track = State(initialValue: track)
+        self._isShowEdit = State(initialValue: isShowEdit ?? true) // Provide a default value
+    }
+
+    public var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(action: {
+                viewModel.togglePlayback(track: track, playlist: Array(isShowEdit ? viewModel.allTracks : viewModel.onboardingTracks))
+            }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        if let itemID = track.imageID?.uuidString,
+                           let dataImage = FileHandler.shared.loadFile(from: itemID),
+                           let uiImage = UIImage(data: dataImage) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .frame(width: 48, height: 48)
+                                .cornerRadius(10)
+                        } else {
+                            Image("musicEmptyIcon")
+                                .resizable()
+                                .frame(width: 48, height: 48)
+                                .cornerRadius(10)
+                        }
+                       
+                    }
+                    VStack(alignment: .leading) {
+                        Text(track.name ?? "")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                        Text("\(track.artist ?? "") • \(track.totalDuration.formatTime())")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.trailing)
+                    Spacer()
+                }
+                .padding(.vertical)
+
+            }
+            .frame(height: 60)
+            .buttonStyle(NoTapAnimationStyle())
+            if isShowEdit {
+                Button {
+                    showActionSheet.toggle()
+                } label: {
+                    Image("settingsDotsIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 25, height: 40)
+                }
+            }
+        }
+        .padding(8)
+        .background((track.id == viewModel.selectedTrack?.id ? Color.white.opacity(0.05) : Color.clear))
+        .cornerRadius(12)
+        .actionSheet(isPresented: $showActionSheet) {
+            ActionSheet(title: Text("Choose Action"), buttons: [
+                .default(Text(track.isFavorite ? "Remove From Favorites" : "Add To Favorites"), action: {
+                    viewModel.updateIsFavorite(song: track, isFavorite: !track.isFavorite)
+                    }),
+                .destructive(Text("Delete"), action: {
+                    showDeleteConfirmation()
+                }),
+                .cancel()
+            ])
+        }
+    }
+
+    func showDeleteConfirmation() {
+        let alert = UIAlertController(title: "Are you sure you want to delete?", message: "", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .default))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { _ in
+            deleteTrack()
+        }))
+        
+        if let viewController = UIApplication.getTopViewController() {
+            viewController.present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    func deleteTrack() {
+        viewModel.deleteSong(song: track)
+        
+        if let trackID = track.id {
+            FileHandler.shared.deleteFile(fileID: trackID.uuidString)
+            // Remove the tracks from the current playlist
+            viewModel.currentPlaylist.removeAll { $0.id == trackID }
+            
+            if let currentTrack = viewModel.selectedTrack, currentTrack.id == trackID {
+                viewModel.stopCurrentPlay()
+            }
+        }
+    }
+}
+
+public struct ImportButton: View {
+    let title: String
+    let iconName: String
+    let action: () -> Void
+    
+    public init(title: String, iconName: String, action: @escaping () -> Void) {
+        self.title = title
+        self.iconName = iconName
+        self.action = action
+    }
+    
+    public var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Color(hex: "#A63103") ?? .black,
+                                            Color(hex: "#FF6504") ?? .black,
+                                            Color(hex: "#FFFF0C") ?? .black]),
+                
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            Button(action: action) {
+                VStack {
+                    HStack(spacing: 13) {
+                        Spacer()
+                        Text(title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                        Image(iconName)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 24, height: 24)
+                            .foregroundColor(.white)
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .cornerRadius(7)
+        .frame(height: 50)
+    }
+}
+
+public struct ShuffleButton: View {
+    let title: String
+    let iconName: String
+    let action: () -> Void
+    
+    public init(title: String, iconName: String, action: @escaping () -> Void) {
+        self.title = title
+        self.iconName = iconName
+        self.action = action
+    }
+    
+    public var body: some View {
+        Button {
+            action()
+        } label: {
+            HStack(spacing: 13) {
+                Spacer()
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white)
+                Image(iconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 24, height: 24)
+                    .foregroundColor(.white)
+                Spacer()
+            }
+            
+            .buttonStyle(NoTapAnimationStyle())
+            .frame(width: 140, height: 50)
+            .background(Color(hex: "292929"))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 2)
+            )
+            .cornerRadius(8)
+            
+        }
+    }
+}
+
+public struct BoostButton: View {
+    var isMini: Bool
+    var imageName: String
+    var width: Double
+    var height: Double
+    @State private var isShowBoostView = false
+
+    public init(isMini: Bool, imageName: String, width: Double, height: Double) {
+        self.isMini = isMini
+        self.imageName = imageName
+        self.width = width
+        self.height = height
+    }
+    
+    public var body: some View {
+        Button {
+            isShowBoostView.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Image(imageName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 24, height: 24)
+                    .foregroundColor(.white)
+                if !isMini {
+                    Text("Boost")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            }
+            
+        }
+        .frame(width: width,
+               height: height)
+        .background(LinearGradient(gradient: Gradient(colors: [Color(hex: "#A63103") ?? .black,
+                                                       Color(hex: "#FF6504") ?? .black,
+                                                       Color(hex: "#FFFF0C") ?? .black]),
+                                   
+                                   startPoint: .topLeading,
+                                   endPoint: .bottomTrailing))
+        .cornerRadius(7)
+        .sheet(isPresented: $isShowBoostView) {
+            BoostConfigView()
+        }
+    }
+}
+
+public struct ImportHeaderView: View {
+    @EnvironmentObject var viewModel: SongViewModel
+    @State private var isDocumentPickerPresented = false
+    @EnvironmentObject private var purchaseManager: PurchaseManager
+    @State private var isOpenPremium = false
+    
+    public var body: some View {
+        ImportButton(title: "Import Song", iconName: "musicIcon") {
+            if purchaseManager.isPremium {
+                isDocumentPickerPresented.toggle()
+            } else {
+                isOpenPremium = true
+            }
+        }
+        .fullScreenCover(isPresented: $isOpenPremium) {
+            PaywallView(showTabBar: false)
+        }
+        .onAppear {
+            purchaseManager.checkSubscriptionStatus()
+        }
+        
+        // Files Picker
+        .fileImporter( isPresented: $isDocumentPickerPresented, allowedContentTypes: [.mp3, .mpeg4Audio, .audio], allowsMultipleSelection: true, onCompletion: { (Result) in
+            do {
+                let urls = try Result.get()
+                for url in urls {
+                    let StartAccess = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if StartAccess {
+                            url.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                    if let trackInfo = ConvertManager.shared.getFileMetadata(from: url) {
+                        do {
+                            let songData = try Data(contentsOf: url)
+                            viewModel.saveSong(data: songData, song: trackInfo)
+                        } catch {
+                            print("Error loading test song data: \(error)")
+                        }
+                    }
+                }
+            } catch{
+                print("error reading file \(error.localizedDescription)")
+            }
+        })
     }
 }
