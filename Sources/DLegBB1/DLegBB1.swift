@@ -2,15 +2,15 @@ import SwiftUI
 import UIKit
 
 public enum LinksConstants {
-    static let privacy = "https://sites.google.com/view/bassbooster-privacy-policy"
-    static let terms = "https://sites.google.com/view/bassbooster-terms-of-use"
-    static let share = "https://itunes.apple.com/app/id6738697391"
-    static let support = "nancycastillo56789@outlook.com"
+    public static let privacy = "https://sites.google.com/view/bassbooster-privacy-policy"
+    public static let terms = "https://sites.google.com/view/bassbooster-terms-of-use"
+    public static let share = "https://itunes.apple.com/app/id6738697391"
+    public static let support = "nancycastillo56789@outlook.com"
 }
 
 public struct SplashView: View {
     
-    static var image: String?
+    public static var image: String?
 
     @available(iOS 13.0.0, *)
     public var body: some View {
