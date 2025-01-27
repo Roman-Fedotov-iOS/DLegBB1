@@ -619,7 +619,9 @@ fileprivate struct SupportEmailService {
 public struct CustomBackButton: View {
     let dismiss: DismissAction
     
-    public init() {}
+    public init(dismiss: DismissAction) {
+        self.dismiss = dismiss
+    }
     
     public var body: some View {
         Button {
