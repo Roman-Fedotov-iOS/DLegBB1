@@ -1032,3 +1032,648 @@ public class CoreDataManager: ObservableObject {
         try? container.viewContext.save()
     }
 }
+
+public class SongViewModel: ObservableObject {
+    @ObservedObject var miniHandler: MinimizableViewHandler = MinimizableViewHandler()
+    
+    @AppStorage("saveLocalTracks") private var saveLocalTracksUD = true
+
+    @Published var allTracks: [SongEntity] = []
+    @Published var favoriteTracks: [SongEntity] = []
+    @Published var onboardingTracks: [SongEntity] = []
+    @Published var currentPlaylist: [SongEntity] = []
+    @Published var selectedTrack: SongEntity?
+    @Published var isPlaying = false
+    @Published var repeatMode: RepeatMode = .once
+    
+    @Published var is3DSurroundEnabled = false
+    @Published var isBassBoostEnabled = true
+    @Published var isSpeedEnabled = true
+    @Published var isPitchEnabled = true
+    
+    @Published var bassBoost: Double = 0
+    @Published var speed: Double = 1
+    @Published var reverb: Double = 0
+    @Published var pitch: Double = 0
+    @Published var player = AVAudioPlayerNode()
+    
+    private let audioEngine = AVAudioEngine()
+    private var reverbNode = AVAudioUnitReverb()
+    private var timePitch = AVAudioUnitTimePitch()
+    private var bassBoostNode = AVAudioUnitEQ(numberOfBands: 1)
+    
+    private var currentAudioFile: AVAudioFile?
+    private var playbackStartTime: TimeInterval?
+    private var pauseTime: TimeInterval?
+    private var audioFileDuration: TimeInterval = 0
+    private var audioFileSampleRate: Double = 0
+    
+    private let coreDataManager = CoreDataManager()
+    private var startPlaylist = [SongEntity]()
+
+    var currentTime: TimeInterval {
+        guard let playbackStartTime = playbackStartTime else { return 0 }
+        if let pauseTime = pauseTime {
+            return pauseTime
+        }
+        return min(CACurrentMediaTime() - playbackStartTime, audioFileDuration)
+    }
+    
+    public init() {
+        setupAudioEngine()
+        getAllSongs()
+        if saveLocalTracksUD {
+            saveLocalTracks(trackNames: ["track1", "track2", "track3", "track4", "track5"])
+        }
+        getOnboardingSongs()
+    }
+    
+    // MARK: - Audio Effects
+    private func setupAudioEngine() {
+        audioEngine.attach(player)
+        audioEngine.attach(reverbNode)
+        audioEngine.attach(timePitch)
+        audioEngine.attach(bassBoostNode)
+        
+        reverbNode.loadFactoryPreset(.largeHall) // Пресет для эффекта 3D Surround
+        reverbNode.wetDryMix = 0 // По умолчанию выключено
+
+        audioEngine.connect(player, to: reverbNode, format: nil)
+        audioEngine.connect(reverbNode, to: timePitch, format: nil)
+        audioEngine.connect(timePitch, to: bassBoostNode, format: nil)
+        audioEngine.connect(bassBoostNode, to: audioEngine.mainMixerNode, format: nil)
+        startAudioEngine()
+    }
+    
+    func startAudioEngine() {
+        do {
+            try audioEngine.start()
+        } catch {
+            print("Audio Engine failed to start: \(error.localizedDescription)")
+        }
+    }
+    
+    func toggle3DSurround(_ isEnabled: Bool) {
+        is3DSurroundEnabled = isEnabled
+    }
+    
+    func toggleBassBoost(_ isEnabled: Bool) {
+        isBassBoostEnabled = isEnabled
+    }
+    
+    func toggleSpeedBoost(_ isEnabled: Bool) {
+        isSpeedEnabled = isEnabled
+    }
+    
+    func togglePitchBoost(_ isEnabled: Bool) {
+        isPitchEnabled = isEnabled
+    }
+    
+    func updateBassBoost(value: Double) {
+        bassBoostNode.globalGain = Float(value)
+        bassBoost = value
+    }
+
+    func updateSpeed(value: Double) {
+        timePitch.rate = Float(value)
+        speed = value
+    }
+
+    func updatePitch(value: Double) {
+        timePitch.pitch = Float(value * 100)
+        pitch = value * 100
+    }
+
+    func updateReverb(value: Double) {
+        reverbNode.wetDryMix = Float(value)
+        reverb = value
+    }
+
+    
+    func saveLocalTracks(trackNames: [String]) {
+        // Первый раз сохраняем треки и фиксируем в user defaults
+        // Если надо обновить треки то обновляем ключ в user defaults -> saveLocalTracksV1
+        /// старые треки удаляются из БД --> загружаются новые
+        coreDataManager.deleteAllOnboarding()
+        saveLocalTracksUD = false
+        for trackName in trackNames {
+            guard let url = Bundle.main.url(forResource: trackName, withExtension: "mp3") else {
+                print("Error: Could not find track \(trackName) in the app bundle.")
+                continue
+            }
+            
+            if let trackInfo = ConvertManager.shared.getFileMetadata(from: url, isOnboarding: true) {
+                do {
+                    let songData = try Data(contentsOf: url)
+                    saveSong(data: songData, song: trackInfo)
+                } catch {
+                    print("Error loading song data for \(trackName): \(error)")
+                }
+            } else {
+                print("Error: Could not retrieve metadata for \(trackName).")
+            }
+        }
+        getOnboardingSongs()
+    }
+    
+    func getOnboardingSongs() {
+        onboardingTracks = coreDataManager.getAllOnboardingSongs()
+    }
+    
+    func getAllSongs() {
+        favoriteTracks = coreDataManager.getAllFavoriteSongs()
+        allTracks = coreDataManager.getAllSongs()
+    }
+    
+    func saveSong(data: Data, song: SongModel) {
+        FileHandler.shared.saveFile(data: data,
+                                    fileID: song.id.uuidString)
+        let _ = coreDataManager.saveSong(newSong: song)
+        getAllSongs()
+    }
+    
+    func updateIsFavorite(song: SongEntity, isFavorite: Bool) {
+        coreDataManager.updateIsFavorite(song: song, isFavorite: isFavorite)
+        getAllSongs()
+    }
+    
+    func deleteSong(song: SongEntity) {
+        coreDataManager.deleteSong(song: song)
+        getAllSongs()
+    }
+    
+    func hidePlayer() {
+        if miniHandler.isPresented {
+            miniHandler.isPresented = false
+        }
+    }
+    
+    func showPlayer() {
+        if let selectedTrack = selectedTrack {
+            if allTracks.contains(where: { $0.id == selectedTrack.id }) {
+                miniHandler.isPresented = true
+            }
+        }
+    }
+    
+    func stopCurrentTrack() {
+        player.stop()
+        currentAudioFile = nil
+        audioFileDuration = 0
+        playbackStartTime = nil
+        pauseTime = nil
+    }
+    
+    private func setupPlayer(track: SongEntity?) {
+        var bookmarkDataIsStale = false
+        guard let playNow = try? URL(resolvingBookmarkData: track?.bookmarkData ?? Data(), bookmarkDataIsStale: &bookmarkDataIsStale) else {
+            return
+        }
+        guard let audioFile = try? AVAudioFile(forReading: playNow) else { return }
+        currentAudioFile = audioFile
+        audioFileDuration = audioFile.length.toSeconds(sampleRate: audioFile.processingFormat.sampleRate)
+        audioFileSampleRate = audioFile.processingFormat.sampleRate
+        
+        player.scheduleFile(audioFile, at: nil, completionHandler: nil)
+        playbackStartTime = CACurrentMediaTime()
+        pauseTime = nil
+        player.play()
+        updateNowPlayingInfo(currentTime: 0)
+        setupPlaylist(mode: repeatMode)
+    }
+    
+    func togglePlayback(track: SongEntity, playlist: [SongEntity]? = nil) {
+        if let playlist = playlist {
+            currentPlaylist = Array(playlist.reversed())
+            startPlaylist = Array(playlist.reversed())
+        }
+        if let currentTrack = selectedTrack, currentTrack.id == track.id {
+            if isPlaying {
+                pauseTrack()
+            } else {
+                playTrack()
+            }
+            isPlaying.toggle()
+        } else {
+            selectedTrack = track
+            stopCurrentTrack()
+            setupPlayer(track: track)
+            isPlaying = true
+            miniHandler.present()
+        }
+    }
+    
+    func pauseTrack() {
+        pauseTime = currentTime
+        player.pause()
+    }
+    
+    func playTrack() {
+        player.play()
+        guard let pauseTime = pauseTime else { return }
+        playbackStartTime = CACurrentMediaTime() - pauseTime
+        self.pauseTime = nil
+    }
+    
+    func togglePlayback() {
+        isPlaying ? pauseTrack() : playTrack()
+        MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .paused : .playing
+        isPlaying.toggle()
+        updateNowPlayingInfo(currentTime: currentTime)
+    }
+    
+    private func togglePlaybackActions() {
+        stopCurrentTrack()
+        setupPlayer(track: selectedTrack)
+        isPlaying = true
+    }
+    
+    func onPreviousTrack() {
+        if let selectedTrack = selectedTrack {
+            let index = (currentPlaylist.firstIndex(where: { $0.id == selectedTrack.id }) ?? 0) - 1
+            if index >= currentPlaylist.startIndex {
+                self.selectedTrack = currentPlaylist[index]
+                self.togglePlaybackActions()
+            } else if index < currentPlaylist.startIndex {
+                if !currentPlaylist.isEmpty {
+                    self.selectedTrack = currentPlaylist[currentPlaylist.endIndex - 1]
+                }
+                self.togglePlaybackActions()
+            }
+        }
+    }
+    
+    func onNextTrack() {
+        if let selectedTrack = selectedTrack {
+            let index = (currentPlaylist.firstIndex(where: { $0.id == selectedTrack.id }) ?? 0) + 1
+            if index < currentPlaylist.count {
+                self.selectedTrack = currentPlaylist[index]
+                self.togglePlaybackActions()
+            } else {
+                if !currentPlaylist.isEmpty {
+                    self.selectedTrack = currentPlaylist[0]
+                }
+                self.togglePlaybackActions()
+            }
+        }
+    }
+    
+    func updateNowPlayingInfo(currentTime: Double) {
+        guard let selectedTrack = selectedTrack else { return }
+        var image = UIImage()
+        if let itemID = selectedTrack.imageID,
+           let trackImageData = FileHandler.shared.loadFile(from: itemID.uuidString),
+           let uiImage = UIImage(data: trackImageData) {
+            image = uiImage
+        } else {
+            image = UIImage(named: "playerNoImage") ?? UIImage()
+        }
+        let nowPlayingInfo: [String : Any] = [
+            MPMediaItemPropertyTitle: selectedTrack.name,
+            MPMediaItemPropertyArtist: selectedTrack.artist,
+            MPMediaItemPropertyPlaybackDuration: selectedTrack.totalDuration ?? 0, // Загальний час треку
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0, // Швидкість відтворення (0.0 - при паузі, 1.0 - при відтворенні)
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime, // Поточний час відтворення
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue, // Тип медіа (ваш випадок - аудіо)
+            MPMediaItemPropertyArtwork: MPMediaItemArtwork(boundsSize: CGSize(width: 100, height: 100), requestHandler: { (size) -> UIImage in //image.size
+                return image
+            })
+        ]
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+    
+    func setupNextMode() {
+        switch repeatMode {
+        case .once:
+            if let currentTrack = selectedTrack {
+                if currentTrack == currentPlaylist.last {
+                    updateNowPlayingInfo(currentTime: 0)
+                    seek(to: CMTime(seconds: 0, preferredTimescale: 600))
+                    player.pause()
+                    isPlaying = false
+                } else {
+                    onNextTrack()
+                }
+            }
+        case .loop:
+            updateNowPlayingInfo(currentTime: 0)
+            seek(to: CMTime(seconds: 0, preferredTimescale: 600))
+            playTrack()
+            isPlaying = true
+        case .none:
+            onNextTrack()
+        case .shuffle:
+            onNextTrack()
+        }
+    }
+    
+    func seek(to time: CMTime) {
+        guard let audioFile = currentAudioFile else {
+            print("Error: No audio file loaded.")
+            return
+        }
+        
+        // Ограничение времени в пределах длины файла
+        let targetTime = max(0, min(time.seconds, audioFileDuration))
+        let framePosition = AVAudioFramePosition(targetTime * audioFileSampleRate)
+        
+        // Проверка валидности позиции
+        guard framePosition < audioFile.length else {
+            print("Error: Frame position is out of bounds.")
+            return
+        }
+        
+        // Остановка текущего воспроизведения
+        player.stop()
+        
+        // Расчет оставшегося количества кадров
+        let remainingFrameCount = AVAudioFrameCount(audioFile.length - framePosition)
+        
+        // Планирование воспроизведения с новой позиции
+        player.scheduleSegment(
+            audioFile,
+            startingFrame: framePosition,
+            frameCount: remainingFrameCount,
+            at: nil,
+            completionHandler: nil
+        )
+        
+        // Сброс времени воспроизведения
+        playbackStartTime = CACurrentMediaTime() - targetTime
+        
+        // Запуск воспроизведения
+        player.play()
+    }
+    
+    func setupPlaylist(mode: RepeatMode) {
+        switch mode {
+        case .once:
+            if !startPlaylist.isEmpty {
+                currentPlaylist = startPlaylist
+            }
+        case .shuffle:
+            if startPlaylist == currentPlaylist {
+                if let selectedTrack = selectedTrack {
+                    currentPlaylist = shufflePlaylist(currentPlaylist: currentPlaylist, selectedTrack: selectedTrack)
+                }
+            }
+        case .loop:
+            if !startPlaylist.isEmpty {
+                currentPlaylist = startPlaylist
+            }
+        case .none:
+            if !startPlaylist.isEmpty {
+                currentPlaylist = startPlaylist
+            }
+        }
+    }
+    
+    func shufflePlaylist(currentPlaylist: [SongEntity], selectedTrack: SongEntity) -> [SongEntity] {
+        // Находим индекс выбранного трека
+        guard let selectedIndex = currentPlaylist.firstIndex(where: { $0.id == selectedTrack.id }) else {
+            // Возвращаем исходный плейлист, если выбранный трек не найден
+            return currentPlaylist
+        }
+        
+        // Создаем копию плейлиста без выбранного трека
+        var playlistWithoutSelected = currentPlaylist
+        playlistWithoutSelected.remove(at: selectedIndex)
+        
+        // Перемешиваем плейлист
+        playlistWithoutSelected.shuffle()
+        
+        // Вставляем выбранный трек обратно на его первоначальное место
+        playlistWithoutSelected.insert(selectedTrack, at: selectedIndex)
+        return playlistWithoutSelected
+    }
+    
+    func stopCurrentPlay() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
+        player.pause()
+        isPlaying = false
+        miniHandler.dismiss()
+        UIApplication.shared.endReceivingRemoteControlEvents()
+    }
+}
+
+
+private extension AVAudioFramePosition {
+    func toSeconds(sampleRate: Double) -> TimeInterval {
+        return TimeInterval(self) / sampleRate
+    }
+}
+
+public enum RepeatMode: CaseIterable {
+    case once, shuffle, loop, none
+    
+    public var image: String {
+        switch self {
+        case .once:
+            return "repeat"
+        case .shuffle:
+            return "shuffle"
+        case .loop:
+            return "repeat"
+        case .none:
+            return "repeat.1"
+        }
+    }
+    
+    public var nextMode: RepeatMode {
+        switch self {
+        case .once:
+            return .shuffle
+        case .shuffle:
+            return .loop
+        case .loop:
+            return RepeatMode.none
+        case .none:
+            return .once
+        }
+    }
+}
+
+public class MinimizableViewHandler: ObservableObject {
+ 
+    var keyboardResponder: MVKeyboardNotifier?
+    public init() {
+
+        self.keyboardResponder = MVKeyboardNotifier(keyboardWillShow: {
+            if self.isMinimized {
+                self.isVisible = false
+            }
+        }, keyboardWillHide: {
+            self.isVisible = true
+        })
+        
+    }
+    ///onPresentation closure
+    public var onPresentation: (()->Void)?
+      ///onDismissal closure
+    public var onDismissal:(()->Void)?
+      ///onExpansion closure
+    public  var onExpansion: (()->Void)?
+      ///onMinimization closure
+    public var onMinimization: (()->Void)?
+    
+    /**draggedOffset: The offset of the minimizable view's position. You can attach your own gesture recognizers to your content view or its subviews, e.g. to dismiss the minimizable view on swiping down.
+ */
+    @Published public var draggedOffsetY: CGFloat = 0
+    
+    
+    @Published internal var isVisible = true
+    /**
+    Call this function to present the minimizable view instead of setting isPresented to true directly.
+    */
+    public func present(animation: Animation = Animation.spring()) {
+        
+        if self.isPresented == false {
+            withAnimation(animation) {
+                self.isPresented = true
+            }
+        }
+  
+    }
+    
+    /**
+    Call this function to dismiss the minimizable view instead of setting isPresented to false directly.
+    */
+    public func dismiss(animation: Animation = Animation.default) {
+        
+        if self.isPresented == true {
+            //withAnimation(animation) {
+                self.isPresented = false
+            //}
+//            if self.isMinimized == true {
+//                self.isMinimized = false
+//            }
+        }
+    }
+    
+    /**
+    Call this function to minimize the minimizable view instead of setting  isMinimized to true directly.
+    */
+    public func minimize(animation: Animation = Animation.default) {
+        
+        if self.isMinimized == false  {
+            withAnimation(animation) {
+                self.isMinimized = true
+            }
+            
+            
+        }
+    }
+    
+    /**
+    Call this function to expand the minimizable view instead of setting i  isMinimized to false directly.
+    */
+    public func expand(animation: Animation = Animation.default) {
+        if self.isMinimized == true  {
+            withAnimation(animation) {
+                self.isMinimized = false
+            }
+        }
+    }
+    
+    /**
+    Call this function to expand or minimize the MinimizableView. Useful in an onTapGesture-closure because you don't need to check the expansion state.
+    */
+    public func toggleExpansionState(expandAnimation: Animation = .spring(), minimizeAnimation: Animation = .spring()) {
+        if self.isMinimized {
+            self.expand(animation: expandAnimation)
+        } else {
+            self.minimize(animation: minimizeAnimation)
+        }
+
+    }
+    
+
+    /**
+    Published variable  get the presentation state of the minimizable view.
+    */
+    @Published public var isPresented: Bool = false {
+        didSet {
+            if isPresented {
+                self.onPresentation?()
+            } else {
+                self.onDismissal?()
+            }
+        }
+    }
+    
+    /**
+    Published variable get the expansion state of the minimizable view.
+    */
+    @Published  public var isMinimized: Bool = false {
+        didSet {
+            if isMinimized {
+                self.onMinimization?()
+            } else {
+                if self.isPresented == true {
+                    self.onExpansion?()
+                }
+            }
+        }
+    }
+}
+
+/**
+ Settings to pass in as parameter into the initializer of mini view
+*/
+public struct MiniSettings {
+    public init(minimizedHeight: CGFloat = 60, overrideHeight: CGFloat? = UIDevice.current.hasNotch ? UIScreen.main.bounds.height - 60 : UIScreen.main.bounds.height, lateralMargin: CGFloat = 0, minimumDragDistance: CGFloat = 0, edgesIgnoringSafeArea: Edge.Set = UIDevice.current.hasNotch ? [.bottom, .top] : []) {
+        self.minimizedHeight = minimizedHeight
+        self.overrideHeight = overrideHeight
+        self.lateralMargin = lateralMargin
+        self.minimumDragDistance = minimumDragDistance
+        self.edgesIgnoringSafeArea = edgesIgnoringSafeArea
+    }
+
+    var minimizedHeight: CGFloat
+
+    var overrideHeight: CGFloat?
+
+    var lateralMargin: CGFloat
+    
+    var minimumDragDistance: CGFloat
+    
+    var edgesIgnoringSafeArea: Edge.Set
+}
+
+public class MVKeyboardNotifier: ObservableObject {
+   
+    private var notificationCentre: NotificationCenter
+    
+    var keyboardWillShow: (()->Void)?
+    var keyboardWillHide:(()->Void)?
+    
+    @Published public var keyboardIsShowing: Bool = false
+    @Published public var keyboardHeight: CGFloat = 0
+    
+    public init(keyboardWillShow:  (()->Void)?, keyboardWillHide: (()->Void)?) {
+        self.notificationCentre =  NotificationCenter.default
+        notificationCentre.addObserver(self, selector: #selector(keyBoardWillShow(notification:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        notificationCentre.addObserver(self, selector: #selector(keyBoardWillHide(notification:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        self.keyboardWillShow = keyboardWillShow
+        self.keyboardWillHide = keyboardWillHide
+    }
+
+    deinit {
+        notificationCentre.removeObserver(self)
+    }
+
+    @objc func keyBoardWillShow(notification: Notification) {
+        self.keyboardWillShow?()
+        self.keyboardIsShowing = true
+        if let keyboardFrame: NSValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            let keyboardRectangle = keyboardFrame.cgRectValue
+            self.keyboardHeight =  keyboardRectangle.height
+        }
+    }
+
+    @objc func keyBoardWillHide(notification: Notification) {
+        self.keyboardWillHide?()
+        self.keyboardIsShowing = false
+        self.keyboardHeight = 0
+    }
+}
