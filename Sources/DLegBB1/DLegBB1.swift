@@ -616,10 +616,12 @@ fileprivate struct SupportEmailService {
     }
 }
  
-struct CustomBackButton: View {
+public struct CustomBackButton: View {
     let dismiss: DismissAction
     
-    var body: some View {
+    public init() {}
+    
+    public var body: some View {
         Button {
             dismiss()
         } label: {
@@ -666,5 +668,87 @@ class PurchaseManager: NSObject, ObservableObject {
             }
         }
         return nil
+    }
+}
+
+public extension Double {
+    func formatTime() -> String {
+        // Check if the Double value is finite
+        guard self.isFinite else {
+            return "0:00"  // or any other appropriate error handling
+        }
+        
+        let minutes = Int(self) / 60
+        let seconds = Int(self) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    func asTimeString(style: DateComponentsFormatter.UnitsStyle) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.minute, .second]
+        formatter.unitsStyle = style
+        formatter.zeroFormattingBehavior = .pad
+        return formatter.string(from: self) ?? ""
+    }
+}
+
+public extension BinaryFloatingPoint {
+    func asTimeString(style: DateComponentsFormatter.UnitsStyle) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.minute, .second]
+        formatter.unitsStyle = style
+        formatter.zeroFormattingBehavior = .pad
+        return formatter.string(from: TimeInterval(self)) ?? "" //formatter.string(from: self) ?? ""
+    }
+}
+
+public extension FileManager {
+    static var documentsDirectory: URL {
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+}
+
+public extension UIApplication {
+
+    class func getTopViewController(base: UIViewController? = UIApplication.shared.windows.first { $0.isKeyWindow }?.rootViewController) -> UIViewController? {
+
+        if let nav = base as? UINavigationController {
+            return getTopViewController(base: nav.visibleViewController)
+
+        } else if let tab = base as? UITabBarController, let selected = tab.selectedViewController {
+            return getTopViewController(base: selected)
+
+        } else if let presented = base?.presentedViewController {
+            return getTopViewController(base: presented)
+        }
+        return base
+    }
+}
+
+public extension View {
+    @available(iOS 14, *)
+    func navigationBarTitleTextColor(_ color: Color) -> some View {
+        let uiColor = UIColor(color)
+        UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: uiColor ]
+        UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: uiColor ]
+        return self
+    }
+    
+    func placeholder<Content: View>(
+        when shouldShow: Bool,
+        alignment: Alignment = .leading,
+        @ViewBuilder placeholder: () -> Content) -> some View {
+            
+            ZStack(alignment: alignment) {
+                placeholder().opacity(shouldShow ? 1 : 0)
+                self
+            }
+        }
+}
+
+public extension UIDevice {
+    var hasNotch: Bool {
+        let keyWindow = UIApplication.shared.windows.filter {$0.isKeyWindow}.first
+        return keyWindow?.safeAreaInsets.bottom ?? 0 > 0
     }
 }
